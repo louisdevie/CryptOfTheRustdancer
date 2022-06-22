@@ -1,0 +1,22 @@
+{
+	"folders": [
+		{
+			"path": ".",
+			"name": "Racine du projet",
+			"folder_exclude_patterns": ["*"],
+			"file_exclude_patterns": ["Cargo.lock"],
+		},
+		{
+			"path": "src",
+			"name": "Code source",
+		},
+		{
+			"path": "res",
+			"name": "Ressources",
+		},
+		{
+			"path": "includeres",
+			"name": "Module d'empaquetage",
+		},
+	]
+}
