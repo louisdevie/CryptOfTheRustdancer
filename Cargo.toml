@@ -11,4 +11,4 @@ include_res = { path = "./includeres/" }
 
 [dependencies.sdl2]
 version = "0.35.2"
-features = ["ttf"]
+features = ["ttf", "mixer"]
