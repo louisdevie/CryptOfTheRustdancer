@@ -36,6 +36,7 @@ pub fn handle_client(
                     Err(_) | Ok(ServerMessage::EndConnection {}) => {
                         println!("fermeture de la connexion @{}", get_peer_address(&socket));
                         socket.shutdown(Shutdown::Both).unwrap_or(());
+                        tx.send(ClientMessage::ConnectionEnded {}).unwrap();
                         false
                     }
                     Ok(msg) => match write_line(&mut socket, &msg.into_bytes()) {
@@ -60,6 +61,7 @@ pub fn handle_client(
                 Err(TryRecvError::Disconnected) | Ok(ServerMessage::EndConnection {}) => {
                     println!("fermeture de la connexion @{}", get_peer_address(&socket));
                     socket.shutdown(Shutdown::Both).unwrap_or(());
+                    tx.send(ClientMessage::ConnectionEnded {}).unwrap();
                     false
                 }
                 Ok(msg) => match write_line(&mut socket, &msg.into_bytes()) {

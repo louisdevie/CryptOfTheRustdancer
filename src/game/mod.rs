@@ -1,8 +1,9 @@
 use crate::interface::{ClientMessage, ServerMessage};
 use crate::resource::image::Images;
 use crate::resource::text::TextRenderer;
-use crate::resource::text::TextRenderingFormat::Blended;
+use crate::resource::text::TextRenderingFormat::{Blended, Shaded};
 use sdl2::event::Event;
+use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::render::{Canvas, RenderTarget};
@@ -19,6 +20,7 @@ enum Action {
     DigWall(Pos),
 }
 
+#[derive(PartialEq)]
 enum State {
     PLAYING,
     STOPPED,
@@ -30,6 +32,7 @@ pub struct Game {
     diamonds_left: usize,
     animations_step_1: u8, // pour les animations des lutins
     animations_step_2: u8, // pour les animations de mouvement
+    timer_end: u8,
     response: Option<ServerMessage>,
     reaction: Action,
     player_sprite_direction: Direction,
@@ -47,6 +50,7 @@ impl Game {
             reaction: Action::Nothing,
             player_sprite_direction: Direction::RIGHT,
             state: State::STOPPED,
+            timer_end: 0,
         }
     }
 
@@ -56,6 +60,7 @@ impl Game {
 
         self.animations_step_1 = 7;
         self.animations_step_2 = 0;
+        self.timer_end = 6;
 
         self.response = None;
         self.reaction = Action::Nothing;
@@ -69,11 +74,28 @@ impl Game {
         self.animations_step_1 %= 8;
 
         match self.reaction {
-            Action::Nothing => true,
+            Action::Nothing => {
+                if self.state != State::PLAYING {
+                    if self.timer_end == 0 {
+                        self.response = Some(ServerMessage::EndConnection);
+                        true
+                    } else {
+                        self.timer_end -= 1;
+                        false
+                    }
+                } else {
+                    true
+                }
+            }
             Action::PlayerMovement(direction) => {
                 self.animations_step_2 += 1;
                 if self.animations_step_2 == 4 {
                     self.map.move_player(direction);
+                    if self.diamonds_left == 0
+                        && self.map.tile_at(self.map.player_pos()) == Some(Tile::EXIT)
+                    {
+                        self.state = State::WON;
+                    }
                     self.map.pick_up_diamond();
                     self.diamonds_left = self.map.diamonds_count();
                     self.reaction = Action::Nothing;
@@ -93,68 +115,85 @@ impl Game {
         }
     }
 
-    pub fn handle_event(&mut self, _event: Event) {}
+    pub fn handle_event(&mut self, ev: Event) {
+        match ev {
+            Event::KeyUp { keycode, .. } => match keycode {
+                Some(Keycode::Escape) => {
+                    if self.state != State::WON {
+                        self.state = State::STOPPED
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
 
     pub fn react_to_message(&mut self, message: ClientMessage) {
-        (self.response, self.reaction) = match message {
-            ClientMessage::EmptyCommand => (
-                Some(ServerMessage::Error("commande vide".to_string())),
-                Action::Nothing,
-            ),
+        if self.state == State::PLAYING {
+            (self.response, self.reaction) = match message {
+                ClientMessage::EmptyCommand => (
+                    Some(ServerMessage::Error("commande vide".to_string())),
+                    Action::Nothing,
+                ),
 
-            ClientMessage::UnknownCommand(command) => (
-                Some(ServerMessage::Error(format!(
-                    "commande « {} » inconnue",
-                    command
-                ))),
-                Action::Nothing,
-            ),
+                ClientMessage::UnknownCommand(command) => (
+                    Some(ServerMessage::Error(format!(
+                        "commande « {} » inconnue",
+                        command
+                    ))),
+                    Action::Nothing,
+                ),
 
-            ClientMessage::InvalidArguments(problem) => {
-                (Some(ServerMessage::Error(problem)), Action::Nothing)
-            }
-
-            ClientMessage::EndGame => (Some(ServerMessage::EndGame {}), Action::Nothing),
-
-            ClientMessage::GetMap => (
-                Some(ServerMessage::MapResponse(self.map.repr())),
-                Action::Nothing,
-            ),
-
-            ClientMessage::Move(direction) => {
-                let dest = self.map.player_pos().moved(direction);
-                match direction {
-                    Direction::LEFT => self.player_sprite_direction = Direction::LEFT,
-                    Direction::RIGHT => self.player_sprite_direction = Direction::RIGHT,
-                    _ => {}
+                ClientMessage::InvalidArguments(problem) => {
+                    (Some(ServerMessage::Error(problem)), Action::Nothing)
                 }
-                match self.map.tile_at(dest) {
-                    Some(Tile::EMPTY) => (
-                        Some(ServerMessage::ValidMove),
-                        Action::PlayerMovement(direction),
-                    ),
-                    Some(Tile::WALL) => (
-                        Some(ServerMessage::ValidMove),
-                        Action::DigWall(self.map.player_pos().moved(direction)),
-                    ),
 
-                    Some(Tile::EXIT) => (
-                        Some(ServerMessage::ValidMove),
-                        Action::PlayerMovement(direction),
-                    ),
-                    Some(Tile::STONE) | Some(Tile::BORDER) | None => (
-                        Some(ServerMessage::Error("mouvement invalide".to_string())),
-                        Action::Nothing,
-                    ),
+                ClientMessage::EndGame => {
+                    self.state = State::STOPPED;
+                    (Some(ServerMessage::EndGame {}), Action::Nothing)
                 }
+
+                ClientMessage::GetMap => (
+                    Some(ServerMessage::MapResponse(self.map.repr())),
+                    Action::Nothing,
+                ),
+
+                ClientMessage::Move(direction) => {
+                    let dest = self.map.player_pos().moved(direction);
+                    match direction {
+                        Direction::LEFT => self.player_sprite_direction = Direction::LEFT,
+                        Direction::RIGHT => self.player_sprite_direction = Direction::RIGHT,
+                        _ => {}
+                    }
+                    match self.map.tile_at(dest) {
+                        Some(Tile::EMPTY) => (
+                            Some(ServerMessage::ValidMove),
+                            Action::PlayerMovement(direction),
+                        ),
+                        Some(Tile::WALL) => (
+                            Some(ServerMessage::ValidMove),
+                            Action::DigWall(self.map.player_pos().moved(direction)),
+                        ),
+
+                        Some(Tile::EXIT) => (
+                            Some(ServerMessage::ValidMove),
+                            Action::PlayerMovement(direction),
+                        ),
+                        Some(Tile::STONE) | Some(Tile::BORDER) | None => (
+                            Some(ServerMessage::Error("mouvement invalide".to_string())),
+                            Action::Nothing,
+                        ),
+                    }
+                }
+                ClientMessage::ConnectionEnded => (
+                    Some(ServerMessage::Error(
+                        "internal error : match arm should not be reachable".to_string(),
+                    )),
+                    Action::Nothing,
+                ),
             }
-            ClientMessage::ConnectionEnded => (
-                Some(ServerMessage::Error(
-                    "internal error : match arm should not be reachable".to_string(),
-                )),
-                Action::Nothing,
-            ),
-        };
+        }
     }
 
     pub fn response(&mut self) -> Option<ServerMessage> {
@@ -309,7 +348,38 @@ impl Game {
         canvas
             .copy(images.diamond_icon(), None, Rect::new(1332, 60, 51, 39))
             .unwrap();
+
+        match self.state {
+            State::PLAYING => {}
+            State::STOPPED => draw_message("Partie interrompue", text_renderer, canvas),
+            State::WON => draw_message("Niveau terminé", text_renderer, canvas),
+        }
     }
+}
+
+fn draw_message<T, U>(msg: &str, tr: &TextRenderer<U>, c: &mut Canvas<T>)
+where
+    T: RenderTarget,
+{
+    let message = tr.render(msg, Shaded(Color::RGB(255, 255, 255), Color::RGB(0, 0, 0)));
+    c.fill_rect(Rect::new(
+        690 - message.width() as i32 / 2,
+        390 - message.height() as i32 / 2,
+        message.width() + 60,
+        message.height() + 30,
+    ))
+    .unwrap();
+    c.copy(
+        message.texture(),
+        None,
+        Rect::new(
+            720 - message.width() as i32 / 2,
+            405 - message.height() as i32 / 2,
+            message.width(),
+            message.height(),
+        ),
+    )
+    .unwrap();
 }
 
 fn animation_offset_x(action: &Action, step: u8) -> i32 {

@@ -11,6 +11,7 @@ pub enum ClientMessage {
     Move(Direction),
 }
 
+#[derive(Debug)]
 pub enum ServerMessage {
     EndConnection,
     Error(String),

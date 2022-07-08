@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 #[macro_use]
 extern crate include_res;
 extern crate oorandom;
@@ -5,11 +7,11 @@ extern crate sdl2;
 
 use sdl2::event::Event;
 use sdl2::pixels::Color;
+use sdl2::rect::Rect;
 use sdl2::rwops::RWops;
 use std::io::ErrorKind;
 use std::net::{Shutdown, TcpListener};
 use std::sync::mpsc::{channel, TryRecvError};
-
 use std::time::Duration;
 
 mod clock;
@@ -37,7 +39,7 @@ pub fn main() {
     let texture_creator = canvas.texture_creator();
 
     // configuration du système audio
-    //let mixer_context = sdl2::mixer::init(sdl2::mixer::InitFlag::MP3).unwrap();
+    let _mixer_context = sdl2::mixer::init(sdl2::mixer::InitFlag::MP3).unwrap();
 
     // configuration du système de texte
     let ttf_context = sdl2::ttf::init().unwrap();
@@ -52,11 +54,37 @@ pub fn main() {
         &texture_creator,
     );
 
+    // écran de chargement
+    canvas.clear();
+    {
+        let message = text_renderer.render(
+            "Chargement ...",
+            resource::text::TextRenderingFormat::Shaded(
+                Color::RGB(255, 255, 255),
+                Color::RGB(0, 0, 0),
+            ),
+        );
+        canvas
+            .copy(
+                message.texture(),
+                None,
+                Rect::new(
+                    720 - message.width() as i32 / 2,
+                    405 - message.height() as i32 / 2,
+                    message.width(),
+                    message.height(),
+                ),
+            )
+            .unwrap();
+        canvas.present();
+    }
+
     // chargement des images
     let images = resource::image::Images::load(&texture_creator);
 
     // chargements de la musique
-    //let sounds = audio::Sounds::load();
+    let sounds = resource::audio::Sounds::load();
+    sounds.play_menu_music();
 
     // différents écrans
     let mut home = home::Home::new();
@@ -96,8 +124,10 @@ pub fn main() {
                 if game.tick() {
                     match handles.as_ref().unwrap().rx.try_recv() {
                         Ok(interface::ClientMessage::ConnectionEnded) => {
+                            handles.unwrap().join_handle.join().unwrap();
                             handles = None;
                             ingame = false;
+                            sounds.play_menu_music();
                             break;
                         }
                         Ok(other) => game.react_to_message(other),
@@ -108,7 +138,7 @@ pub fn main() {
                     }
                 }
                 match game.response() {
-                    Some(message) => handles.as_ref().unwrap().tx.send(message).unwrap(),
+                    Some(message) => handles.as_ref().unwrap().tx.send(message).unwrap_or(()),
                     None => {}
                 }
             }
@@ -137,6 +167,7 @@ pub fn main() {
                     println!("connecté au client @{}", addr);
                     ingame = true;
                     game.reset(home.seed());
+                    sounds.play_in_game_music();
                 } else {
                     // refuser la connexion si une partie est déja en cours
                     socket.shutdown(Shutdown::Both).unwrap();
